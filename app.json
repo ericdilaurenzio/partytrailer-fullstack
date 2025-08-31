@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "PartyTrailer",
+    "slug": "partytrailer-mobile",
+    "scheme": "partytrailer",
+    "orientation": "portrait",
+    "ios": { "supportsTablet": true },
+    "android": { "adaptiveIcon": { "backgroundColor": "#FFFFFF" } },
+    "jsEngine": "jsc"
+  }
+}
