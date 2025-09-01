@@ -1,44 +1,67 @@
-﻿const express = require("express");
-const router = express.Router();
+﻿const router = require("express").Router();
 const mongoose = require("mongoose");
 const Thread = require("../models/Thread");
 const Message = require("../models/Message");
 
-// Resolve a thread by slug OR ObjectId; if slug and not found, optionally create
-async function resolveThreadId(idOrSlug, opts = { createIfMissing: true }) {
-  if (mongoose.Types.ObjectId.isValid(idOrSlug)) {
-    return idOrSlug;
-  }
-  // treat as slug
-  let th = await Thread.findOne({ slug: idOrSlug });
-  if (!th && opts.createIfMissing) {
-    th = await Thread.create({ slug: idOrSlug, participants: [] });
-  }
-  if (!th) throw new Error("thread not found");
-  return th._id.toString();
+function isObjectId(str) {
+  return mongoose.Types.ObjectId.isValid(str);
 }
 
-// GET /api/messages/threads/:id/messages
-router.get("/threads/:id/messages", async (req, res) => {
+async function ensureThreadBySlug(slug) {
+  let t = await Thread.findOne({ slug });
+  if (!t) {
+    t = await Thread.create({ slug, participants: [] });
+  }
+  return t;
+}
+
+// GET messages for thread by ObjectId or slug
+router.get("/threads/:idOrSlug/messages", async (req, res) => {
   try {
-    const tid = await resolveThreadId(req.params.id, { createIfMissing: false });
-    const msgs = await Message.find({ threadId: tid }).sort({ createdAt: 1 }).lean();
-    res.json(msgs);
+    const key = req.params.idOrSlug;
+    if (isObjectId(key)) {
+      const thread = await Thread.findById(key);
+      if (!thread) return res.status(404).json({ error: "Thread not found" });
+      const msgs = await Message.find({ threadId: thread._id }).sort({ createdAt: -1 });
+      return res.json(msgs);
+    }
+    // slug path
+    const thread = await ensureThreadBySlug(key);
+    const msgs = await Message.find({
+      $or: [{ threadId: thread._id }, { threadSlug: key }],
+    }).sort({ createdAt: -1 });
+    return res.json(msgs);
   } catch (e) {
-    res.status(500).json({ error: e.message || "failed to load messages" });
+    console.error(e);
+    return res.status(500).json({ error: e.message });
   }
 });
 
-// POST /api/messages/threads/:id/messages { sender, body }
-router.post("/threads/:id/messages", async (req, res) => {
+// POST message to thread by ObjectId or slug
+router.post("/threads/:idOrSlug/messages", async (req, res) => {
   try {
+    const key = req.params.idOrSlug;
     const { sender, body } = req.body || {};
-    if (!sender || !body) return res.status(400).json({ error: "sender and body are required" });
-    const tid = await resolveThreadId(req.params.id, { createIfMissing: true });
-    const saved = await Message.create({ threadId: tid, sender, body });
-    res.status(201).json(saved);
+    if (!sender || !body) {
+      return res.status(400).json({ error: "sender and body are required" });
+    }
+    let payload = { sender, body };
+
+    if (isObjectId(key)) {
+      const thread = await Thread.findById(key);
+      if (!thread) return res.status(404).json({ error: "Thread not found" });
+      payload.threadId = thread._id;
+    } else {
+      const thread = await ensureThreadBySlug(key);
+      payload.threadId = thread._id;
+      payload.threadSlug = key;
+    }
+
+    const saved = await Message.create(payload);
+    return res.status(201).json(saved);
   } catch (e) {
-    res.status(500).json({ error: e.message || "failed to send message" });
+    console.error(e);
+    return res.status(500).json({ error: e.message });
   }
 });
 

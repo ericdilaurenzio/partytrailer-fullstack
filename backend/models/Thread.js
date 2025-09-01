@@ -2,9 +2,11 @@
 
 const ThreadSchema = new mongoose.Schema(
   {
-    // Optional human-friendly slug so you can use /threads/general-support
+    // Optional slug so URLs can use strings like "general-support"
     slug: { type: String, unique: true, sparse: true, index: true },
-    participants: [String],
+
+    // Participants you've used before
+    participants: [String], // e.g., ["cus_abc", "admin:eric"]
   },
   { timestamps: true }
 );
