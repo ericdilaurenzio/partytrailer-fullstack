@@ -1,4 +1,4 @@
-﻿// server.js
+// server.js
 // Clean Express server with MongoDB, CORS, and Booqable inventory routes wired.
 // ESM module syntax. Requires: "type": "module" in package.json.
 
@@ -13,6 +13,7 @@ import { fileURLToPath } from "url";
 // Routers created in Step 1
 import syncBooqableRouter from "./src/routes/syncBooqable.js";
 import inventoryRouter from "./src/routes/inventory.js";
+import booqableCreateBookingRouter from "./src/routes/booqableCreateBooking.js";
 
 // ===== Resolve __dirname (ESM) =====
 const __filename = fileURLToPath(import.meta.url);
@@ -42,8 +43,11 @@ app.use(
   })
 );
 app.use(express.json({ limit: "2mb" }));
+app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 app.use(morgan("dev"));
+app.use(express.json());
 
 // ===== Database =====
 mongoose.set("strictQuery", false);
@@ -75,13 +79,16 @@ app.get("/version", (_req, res) => {
 // ===== API Routes =====
 // Booqable inventory import (admin-protect later)
 app.use("/api/sync/booqable", syncBooqableRouter);
+app.use(express.json());
 
 // Local inventory listing (used by mobile UI)
 app.use("/api", inventoryRouter);
+app.use(express.json());
 
 // ===== Static (optional): serve a public folder if you have one =====
 // const publicDir = path.join(__dirname, "public");
 // app.use(express.static(publicDir));
+app.use(express.json());
 
 // ===== 404 =====
 app.use((req, res, next) => {
@@ -99,6 +106,8 @@ app.use((err, req, res, _next) => {
 });
 
 // ===== Start Server =====
+// Booqable: create booking
+app.use("/api/sync/booqable", booqableCreateBookingRouter);
 app.listen(PORT, () => {
   console.log(`[Server] listening on http://localhost:${PORT}`);
   if (!process.env.BOOQABLE_API_KEY) {
@@ -107,3 +116,4 @@ app.listen(PORT, () => {
     );
   }
 });
+

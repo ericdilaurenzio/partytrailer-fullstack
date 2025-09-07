@@ -1,4 +1,4 @@
-﻿import mongoose from "mongoose";
+import mongoose from "mongoose";
 
 const ReservationSchema = new mongoose.Schema({
   externalSystem: { type: String, default: "booqable", index: true },
