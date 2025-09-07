@@ -1,4 +1,4 @@
-// server.js
+﻿// server.js
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
@@ -6,13 +6,25 @@ import mongoose from "mongoose";
 import morgan from "morgan";
 import path from "path";
 import { fileURLToPath } from "url";
-
 // Routers
+import calendarShareEmailRouter from "./src/routes/calendarShareEmail.js";
+import calendarLinksRouter from "./src/routes/calendarLinks.js";
 import syncBooqableRouter from "./src/routes/syncBooqable.js";
 import inventoryRouter from "./src/routes/inventory.js";
+import booqableCreateBookingRouter from "./src/routes/booqableCreateBooking.js";
 import syncBooqableReservationsRouter from "./src/routes/syncBooqableReservations.js";
 import reservationsRouter from "./src/routes/reservations.js";
-
+import calendarSubscribeRouter from "./src/routes/calendarSubscribe.js";
+import calendarSubscribePageRouter from "./src/routes/calendarSubscribePage.js";
+import calendarLinkRouter from "./src/routes/calendarLink.js";
+import calendarIcsRouter from "./src/routes/calendarIcs.js";
+import holdsRouter from "./src/routes/holds.js";
+import booqableStatusRouter from "./src/routes/booqableStatus.js";
+import utilsMailtoRouter from "./src/routes/utilsMailto.js";
+import booqableCreateWithPaylinkRouter from "./src/routes/booqableCreateWithPaylink.js";
+import booqablePaylinkEmailRouter from "./src/routes/booqablePaylinkEmail.js";
+import booqableInvoicesRouter from "./src/routes/booqableInvoices.js";
+import booqableProductsRouter from "./src/routes/booqableProducts.js";
 // __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -39,8 +51,25 @@ app.use(express.json({ limit: "2mb" }));
 app.use(express.urlencoded({ extended: true }));
 app.use(morgan("dev"));
 
+
+// Strong no-cache for ICS so Google/clients always fetch fresh copy
+app.use((req, res, next) => {
+  try {
+    if (req.path && req.path.toLowerCase().endsWith(".ics")) {
+      res.set("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.set("Pragma", "no-cache");
+      res.set("Expires", "0");
+      res.set("Referrer-Policy", "no-referrer"); // minor hardening
+    }
+  } catch (e) {
+    // ignore
+  }
+  next();
+});
+
 mongoose.set("strictQuery", false);
-mongoose.connect(MONGO_URI, { autoIndex: true })
+mongoose
+  .connect(MONGO_URI, { autoIndex: true })
   .then(() => console.log("[MongoDB] connected"))
   .catch((err) => {
     console.error("[MongoDB] connection error:", err?.message || err);
@@ -50,26 +79,18 @@ mongoose.connect(MONGO_URI, { autoIndex: true })
 app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "partytrailer-api", time: new Date().toISOString() });
 });
+
 app.get("/version", (_req, res) => {
   res.json({
     name: "partytrailer-api",
     version: process.env.npm_package_version || "0.0.0",
     node: process.version,
-    env: process.env.NODE_ENV || "development",
   });
 });
+app.use("/api/calendar/share-email", calendarShareEmailRouter);
 
-// API routes
-app.use("/api/sync/booqable", syncBooqableRouter);
 
-// Reservations: sync + list
-app.use("/api/sync/booqable", syncBooqableReservationsRouter);
-app.use("/api", reservationsRouter);
-
-// 404
-app.use((req, res) => {
-  res.status(404).json({ ok: false, error: "Not Found", path: req.originalUrl });
-});
+app.use("/api/calendar", calendarLinksRouter);
 
 // Error handler
 app.use((err, req, res, _next) => {
@@ -77,10 +98,14 @@ app.use((err, req, res, _next) => {
   res.status(err.status || 500).json({ ok: false, error: err.message || "Internal Server Error" });
 });
 
+// Start server
 app.listen(PORT, () => {
   console.log(`[Server] listening on http://localhost:${PORT}`);
   if (!process.env.BOOQABLE_API_KEY) {
     console.warn("[Warn] BOOQABLE_API_KEY not set. Inventory import will fail until you set it in .env");
   }
 });
+
+
+
 
