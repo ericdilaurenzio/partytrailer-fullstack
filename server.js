@@ -99,12 +99,18 @@ app.use((err, req, res, _next) => {
 });
 
 // Start server
+app.use("/api", holdsRouter);
+
+app.use("/api", booqableCreateWithPaylinkRouter);
+
 app.listen(PORT, () => {
   console.log(`[Server] listening on http://localhost:${PORT}`);
   if (!process.env.BOOQABLE_API_KEY) {
     console.warn("[Warn] BOOQABLE_API_KEY not set. Inventory import will fail until you set it in .env");
   }
 });
+
+
 
 
 
