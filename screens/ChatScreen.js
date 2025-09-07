@@ -1,75 +1,119 @@
-﻿import React, { useEffect, useRef, useState, useCallback } from "react";
+﻿import React, { useEffect, useRef, useState, useCallback, useMemo } from "react";
+import { View, Text, Pressable, StyleSheet } from "react-native";
 import { GiftedChat } from "react-native-gifted-chat";
 import io from "socket.io-client";
+import { BACKEND_URL, CONVERSATION_ID, ADMIN_ID, CUSTOMER_ID } from "../lib/config";
 
-export default function ChatScreen({ threadId, user, backend }) {
+// Map backend message -> GiftedChat format
+const toGifted = (m) => ({
+  _id: m._id || Math.random().toString(36).slice(2),
+  text: m.body || "",
+  createdAt: m.createdAt ? new Date(m.createdAt) : new Date(),
+  user: {
+    _id: m.senderId,
+    name: m.senderId === ADMIN_ID ? "Admin" : "Customer",
+  },
+});
+
+export default function ChatScreen() {
+  // quick role toggle so you can test both sides
+  const [role, setRole] = useState("customer"); // 'customer' | 'admin'
+  const me = useMemo(() => (role === "admin" ? ADMIN_ID : CUSTOMER_ID), [role]);
+
   const [messages, setMessages] = useState([]);
   const socketRef = useRef(null);
 
+  // Load history on mount
   useEffect(() => {
-    let isMounted = true;
-
-    socketRef.current = io(backend, { transports: ["websocket"] });
-
+    let mounted = true;
     (async () => {
       try {
-        const res = await fetch(`${backend}/api/messages/threads/${threadId}/messages`, {
-          method: "GET",
-          headers: { Accept: "application/json" },
-        });
+        const res = await fetch(`${BACKEND_URL}/api/conversations/${CONVERSATION_ID}/messages`);
         const data = await res.json();
-        if (isMounted) setMessages(mapToGifted((data || []).reverse()));
+        // GiftedChat expects newest first, so reverse
+        const gifted = (data || []).map(toGifted).reverse();
+        if (mounted) setMessages(gifted);
       } catch (e) {
-        console.log("load messages error:", e?.message || e);
+        console.warn("Failed to load messages:", e?.message || e);
       }
     })();
+    return () => { mounted = false; };
+  }, []);
 
-    socketRef.current.on("message", (m) => {
-      setMessages((prev) => GiftedChat.append(prev, mapToGifted([m])));
+  // Socket.IO join + live updates
+  useEffect(() => {
+    const socket = io(BACKEND_URL, { transports: ["websocket"], forceNew: true });
+    socketRef.current = socket;
+
+    socket.on("connect", () => {
+      socket.emit("joinConversation", CONVERSATION_ID);
     });
 
-    return () => { isMounted = false; socketRef.current?.disconnect(); };
-  }, [backend, threadId]);
-
-  const onSend = useCallback(
-    async (msgs = []) => {
-      const msg = msgs[0];
-      if (!msg?.text?.trim()) return;
-      try {
-        const res = await fetch(`${backend}/api/messages/threads/${threadId}/messages`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ senderId: user.uid, text: msg.text.trim() }),
-        });
-        const saved = await res.json();
-        setMessages((prev) => GiftedChat.append(prev, mapToGifted([saved])));
-        socketRef.current?.emit("sendMessage", { threadId, sender: user.uid, body: msg.text.trim() });
-      } catch (e) {
-        console.log("sendMessage error:", e?.message || e);
+    socket.on("messageCreated", (msg) => {
+      if (msg?.conversationId === CONVERSATION_ID) {
+        setMessages((prev) => GiftedChat.append(prev, [toGifted(msg)]));
       }
-    },
-    [backend, threadId, user.uid]
-  );
+    });
+
+    return () => socket.disconnect();
+  }, []);
+
+  const onSend = useCallback(async (newMsgs = []) => {
+    const first = newMsgs[0];
+    if (!first?.text?.trim()) return;
+
+    // optimistic append
+    setMessages((prev) =>
+      GiftedChat.append(prev, [{
+        _id: `local-${Date.now()}`,
+        text: first.text.trim(),
+        createdAt: new Date(),
+        user: { _id: me, name: me === ADMIN_ID ? "Admin" : "Customer" },
+      }])
+    );
+
+    try {
+      await fetch(`${BACKEND_URL}/api/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId: CONVERSATION_ID,
+          senderId: me,
+          body: first.text.trim(),
+        }),
+      });
+      // Server will broadcast 'messageCreated' to all (including us)
+    } catch (e) {
+      console.warn("send error:", e?.message || e);
+    }
+  }, [me]);
 
   return (
-    <GiftedChat
-      messages={messages}
-      onSend={(msgs) => onSend(msgs)}
-      user={{ _id: user.uid, name: user.name || user.uid }}
-      renderAvatarOnTop
-      alwaysShowSend
-    />
-  );
-}
+    <View style={{ flex: 1, backgroundColor: "#0b1220" }}>
+      <View style={styles.header}>
+        <Text style={styles.title}>Messages</Text>
+        <View style={styles.roleRow}>
+          <Pressable
+            onPress={() => setRole("customer")}
+            style={[styles.roleBtn, role === "customer" && styles.roleActive]}
+          >
+            <Text style={styles.roleTxt}>As Customer</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setRole("admin")}
+            style={[styles.roleBtn, role === "admin" && styles.roleActive]}
+          >
+            <Text style={styles.roleTxt}>As Admin</Text>
+          </Pressable>
+        </View>
+      </View>
 
-function mapToGifted(msgs) {
-  return (msgs || []).map((m) => ({
-    _id: m._id || Math.random().toString(36).slice(2),
-    text: m.body,
-    createdAt: m.createdAt ? new Date(m.createdAt) : new Date(),
-    user: {
-      _id: m.sender,
-      name: String(m.sender || "").startsWith("admin:") ? "Admin" : m.sender,
-    },
-  }));
-}
+      <GiftedChat
+        messages={messages}
+        onSend={onSend}
+        user={{ _id: me, name: me === ADMIN_ID ? "Admin" : "Customer" }}
+        renderAvatarOnTop
+        alwaysShowSend
+      />
+    </View>
+  );

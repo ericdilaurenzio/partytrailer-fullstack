@@ -1,0 +1,66 @@
+﻿import React, { useState } from "react";
+import { TouchableOpacity, Text, ActivityIndicator, Alert, Linking } from "react-native";
+
+const API_BASE = process.env.EXPO_PUBLIC_API_BASE || "http://localhost:5001";
+
+function utcVersion() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return (
+    d.getUTCFullYear().toString() +
+    pad(d.getUTCMonth() + 1) +
+    pad(d.getUTCDate()) +
+    pad(d.getUTCHours()) +
+    pad(d.getUTCMinutes()) +
+    pad(d.getUTCSeconds())
+  );
+}
+
+export default function ShareEmailButton({ to = "" }) {
+  const [busy, setBusy] = useState(false);
+
+  const onShareEmail = async () => {
+    try {
+      setBusy(true);
+      const v = utcVersion();
+      const url = `${API_BASE}/api/calendar/share-email?to=${encodeURIComponent(to)}&v=${encodeURIComponent(v)}`;
+      const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (!data?.ok || !data?.mailto) throw new Error("Bad payload");
+      const supported = await Linking.canOpenURL(data.mailto);
+      if (!supported) {
+        Alert.alert("No mail app found", "Please configure an email app first.");
+        return;
+      }
+      await Linking.openURL(data.mailto);
+    } catch (e) {
+      console.error(e);
+      Alert.alert("Share failed", "Unable to open your email app right now.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <TouchableOpacity
+      onPress={onShareEmail}
+      disabled={busy}
+      style={{
+        backgroundColor: "#222",
+        padding: 14,
+        borderRadius: 14,
+        alignItems: "center",
+        marginTop: 8,
+        opacity: busy ? 0.7 : 1,
+      }}
+    >
+      {busy ? (
+        <ActivityIndicator />
+      ) : (
+        <Text style={{ color: "white", fontWeight: "600" }}>Share via Email</Text>
+      )}
+    </TouchableOpacity>
+  );
+}
+

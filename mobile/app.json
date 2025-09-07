@@ -1,0 +1,12 @@
+﻿{
+  "expo": {
+    "name": "partytrailer",
+    "slug": "partytrailer",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "platforms": ["ios", "android", "web"],
+    "android": {
+      "softwareKeyboardLayoutMode": "pan"
+    }
+  }
+}
