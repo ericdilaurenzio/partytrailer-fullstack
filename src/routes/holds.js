@@ -1,0 +1,140 @@
+﻿import express from "express";
+import { normalizeLogistics } from "../utils/logisticsFee.js";
+import fetch from "node-fetch";import Hold from "../models/Hold.js";
+
+
+const router = express.Router();
+
+// Normalize logistics for POST requests so deliveryFee is computed server-side.
+router.use(async (req, res, next) => {
+  try {
+    if (req.method === "POST" && req.body && typeof req.body === "object") {
+      const input = req.body.logistics || {};
+      const { logistics } = await normalizeLogistics(input);
+      req.body.logistics = logistics;
+    }
+  } catch (e) {
+    // non-fatal
+  }
+  next();
+});/** POST /api/holds
+ * body: { customerName, customerEmail?, customerPhone?, startAt, endAt, notes? }
+ */
+router.post("/holds", async (req, res, next) => {
+  try {
+    const { customerName, customerEmail="", customerPhone="", startAt, endAt, notes="" } = req.body || {};
+    if (!customerName || !startAt || !endAt) {
+      return res.status(400).json({ ok:false, error:"customerName, startAt, endAt are required" });
+    }
+    const s = new Date(startAt), e = new Date(endAt);
+    if (isNaN(s) || isNaN(e) || e <= s) {
+      return res.status(400).json({ ok:false, error:"Invalid dates (endAt must be after startAt)" });
+    }
+    const hold = await Hold.create({ customerName, customerEmail, customerPhone, startAt:s, endAt:e, notes , logistics: req.body.logistics });
+    return res.json({ ok:true, hold });
+  } catch (e) { next(e); }
+});
+
+/** GET /api/holds
+ * query: from? to?
+ * Defaults: from = now-14d, to = now+180d (so you can grey a season)
+ */
+router.get("/holds", async (req, res, next) => {
+  try {
+    const now = new Date();
+    const from = req.query.from ? new Date(req.query.from) : new Date(now.getTime() - 14*24*3600*1000);
+    const to   = req.query.to   ? new Date(req.query.to)   : new Date(now.getTime() + 180*24*3600*1000);
+    const q = { $or: [
+      { startAt: { $lt: to  }, endAt: { $gt: from } }, // overlaps with window
+    ]};
+    const holds = await Hold.find(q).sort({ startAt: 1 }).lean();
+    return res.json({ ok:true, holds });
+  } catch (e) { next(e); }
+});
+
+/** DELETE /api/holds/:id */
+router.delete("/holds/:id", async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const del = await Hold.findByIdAndDelete(id);
+    if (!del) return res.status(404).json({ ok:false, error:"Hold not found" });
+    return res.json({ ok:true, deleted: id });
+  } catch (e) { next(e); }
+});
+
+export default router;
+/** POST /api/holds/:id/promote
+ * body: {
+ *   items: [{ name?:string, sku?:string, quantity?:number }],
+ *   keepHold?: boolean,              // default false -> delete hold on success
+ *   notes?: string,                  // optional booking notes
+ *   customerOverride?: { name,email,phone } // optional override
+ * }
+ * Uses hold { customerName, customerEmail, customerPhone, startAt, endAt, notes } to create a real booking.
+ */
+router.post("/holds/:id/promote", async (req, res, next) => {
+  try {
+    const id = req.params.id;
+    const hold = await Hold.findById(id).lean();
+    if (!hold) return res.status(404).json({ ok:false, error:"Hold not found" });
+
+    const keepHold = !!req.body.keepHold;
+    const items = Array.isArray(req.body.items) ? req.body.items : [];
+    const notes = req.body.notes ?? hold.notes ?? "";
+
+    const customer = req.body.customerOverride ? {
+      name:  req.body.customerOverride.name  ?? hold.customerName,
+      email: req.body.customerOverride.email ?? hold.customerEmail,
+      phone: req.body.customerOverride.phone ?? hold.customerPhone,
+    } : {
+      name: hold.customerName,
+      email: hold.customerEmail,
+      phone: hold.customerPhone,
+    };
+
+    // Build payload for our existing endpoint
+    const port = process.env.PORT || 5000;
+    const url  = `http://127.0.0.1:${port}/api/booking/create-with-paylink`;
+    const payload = {
+      customer,
+      startAt: hold.startAt,
+      endAt: hold.endAt,
+      notes,
+      items
+    };
+
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+    const t = await r.text();
+    if (!r.ok) {
+      return res.status(400).json({ ok:false, error:"Booking create-with-paylink failed", details: t.slice(0,300) });
+    }
+    let j; try { j = JSON.parse(t) } catch { j = { raw:t } }
+
+    // On success, delete the hold unless keepHold=true
+    let holdDeleted = false;
+    if (!keepHold) {
+      const del = await Hold.findByIdAndDelete(id);
+      holdDeleted = !!del;
+    }
+
+    return res.json({
+      ok: true,
+      holdId: id,
+      holdDeleted,
+      orderId: j.orderId,
+      paymentLink: j.paymentLink || null,
+      customer: j.customer || null,
+      itemsRequested: j.itemsRequested,
+      itemsAttached: j.itemsAttached,
+      itemsUnresolved: j.itemsUnresolved,
+      email: j.email
+    });
+  } catch (e) { next(e); }
+});
+
+
+
